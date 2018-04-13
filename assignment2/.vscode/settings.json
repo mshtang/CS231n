@@ -1,0 +1,6 @@
+{
+    "editor.wordWrapColumn": 120,
+    "python.formatting.autopep8Args": [
+        "--ignore=E501"
+    ],
+}
