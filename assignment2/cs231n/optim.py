@@ -62,12 +62,14 @@ def sgd_momentum(w, dw, config=None):
     config.setdefault('momentum', 0.9)
     v = config.get('velocity', np.zeros_like(w))
 
-    next_w = None
+    next_w = np.zeros_like(w)
     ###########################################################################
     # TODO: Implement the momentum update formula. Store the updated value in #
     # the next_w variable. You should also use and update the velocity v.     #
     ###########################################################################
-    pass
+    v = config['momentum'] * v - config['learning_rate'] * dw
+    w += v
+    next_w = w
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -101,7 +103,14 @@ def rmsprop(x, dx, config=None):
     # in the next_x variable. Don't forget to update cache value stored in    #
     # config['cache'].                                                        #
     ###########################################################################
-    pass
+    lr = config.get('learning_rate')
+    dr = config.get('decay_rate')
+    eps = config.get('epsilon')
+    cache = config.get('cache')
+
+    cache = dr * cache + (1-dr)*dx**2
+    next_x = x - lr * dx / (np.sqrt(cache)+eps)
+    config['cache'] = cache
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -139,7 +148,29 @@ def adam(x, dx, config=None):
     # the next_x variable. Don't forget to update the m, v, and t variables   #
     # stored in config.                                                       #
     ###########################################################################
-    pass
+    lr = config.get('learning_rate')
+    beta1 = config.get('beta1')
+    beta2 = config.get('beta2')
+    epsilon = config.get('epsilon')
+    m = config.get('m')
+    v = config.get('v')
+    t = config.get('t')
+
+    # cf. Kingma and Ba "Adam: A method for stochastic optimization"
+    t += 1
+    # update biased first moment estimate
+    m_t = beta1 * m + (1-beta1) * dx
+    # update biased second raw moment estimate
+    v_t = beta2 * v + (1-beta2) * dx**2
+    # compute bias-corrected first moment estimate
+    mt_hat = m_t/(1-beta1**t)
+    # compute bias-corrected second raw moment estimate
+    vt_hat = v_t/(1-beta2**t)
+    # update parameters
+    next_x = x - lr*mt_hat/(np.sqrt(vt_hat)+epsilon)
+    config['m'] = m_t
+    config['v'] = v_t
+    config['t'] = t
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
