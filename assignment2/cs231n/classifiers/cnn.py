@@ -48,14 +48,33 @@ class ThreeLayerConvNet(object):
         # hidden affine layer, and keys 'W3' and 'b3' for the weights and biases   #
         # of the output affine layer.                                              #
         ############################################################################
-        pass
+        C, H, W = input_dim
+        # W1.shape = (F, C, Hfilter, Wfilter)
+        self.params['W1'] = np.random.rand(
+            num_filters, C, filter_size, filter_size) * weight_scale
+        self.params['b1'] = np.zeros((num_filters))
+
+        # pooling layer
+        pool_width = 2
+        pool_height = 2
+        pool_stride = 2
+        Hp = (H-pool_height)//pool_stride+1
+        Wp = (W-pool_width)//pool_stride+1
+        # W2.shape = (hidden_dim*C, hidden_dim)
+        self.params['W2'] = np.random.rand(
+            num_filters*Hp*Wp, hidden_dim)*weight_scale
+        self.params['b2'] = np.zeros((hidden_dim))
+        # W3.shape = (hidden_dim, num_classes)
+        self.params['W3'] = np.random.rand(
+            hidden_dim, num_classes) * weight_scale
+        self.params['b3'] = np.zeros((num_classes))
+
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
 
         for k, v in self.params.items():
             self.params[k] = v.astype(dtype)
-
 
     def loss(self, X, y=None):
         """
@@ -80,7 +99,26 @@ class ThreeLayerConvNet(object):
         # computing the class scores for X and storing them in the scores          #
         # variable.                                                                #
         ############################################################################
-        pass
+        # Forward into the conv layer
+        x = X
+        w = W1
+        b = b1
+        conv_layer, cache_conv_layer = conv_relu_pool_forward(
+            x, w, b, conv_param, pool_param)
+        N, F, Hp, Wp = conv_layer.shape  # output shape
+
+        # Forward into the hidden layer
+        x = conv_layer.reshape((N, F * Hp * Wp))
+        w = W2
+        b = b2
+        hidden_layer, cache_hidden_layer = affine_relu_forward(x, w, b)
+        N, Hh = hidden_layer.shape
+
+        # Forward into the linear output layer
+        x = hidden_layer
+        w = W3
+        b = b3
+        scores, cache_scores = affine_forward(x, w, b)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -95,7 +133,27 @@ class ThreeLayerConvNet(object):
         # data loss using softmax, and make sure that grads[k] holds the gradients #
         # for self.params[k]. Don't forget to add L2 regularization!               #
         ############################################################################
-        pass
+        loss, dscores = softmax_loss(scores, y)
+        reg_loss = .5*self.reg * \
+            np.sum(W1**2) + .5*self.reg*np.sum(W2**2)+.5*self.reg*np.sum(W3**2)
+        loss += reg_loss
+
+        dx3, dW3, db3 = affine_backward(dscores, cache_scores)
+        dW3 += self.reg*dW3
+
+        dx2, dW2, db2 = affine_relu_backward(dx3, cache_hidden_layer)
+        dW2 += self.reg*dW2
+
+        dx2 = dx2.reshape(N, F, Hp, Wp)
+        dx, dW1, db1 = conv_relu_pool_backward(dx2, cache_conv_layer)
+        dW1 += self.reg*dW1
+        grads.update({'W1': dW1,
+                      'b1': db1,
+                      'W2': dW2,
+                      'b2': db2,
+                      'W3': dW3,
+                      'b3': db3})
+
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################

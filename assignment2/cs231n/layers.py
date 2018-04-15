@@ -412,18 +412,26 @@ def conv_forward_naive(x, w, b, conv_param):
     # TODO: Implement the convolutional forward pass.                         #
     # Hint: you can use the function np.pad for padding.                      #
     ###########################################################################
-    pad_width = conv_param.get('pad')
-    x_ = np.pad(x, pad_width, 'constant', constant_values=0)
-    stride = conv_param.get('stride')
-    H_ = np.int((H+2*pad_width-HH)/stride+1)
-    W_ = np.int((W+2*pad_width-WW)/stride+1)
-    out = np.zeros((N, F, H_, W_))
-    for n in range(N):  # for each image in the batch
-        for f in range(F):  # for each filter
-            for h in range(H_):
-                for w in range(W_):
-                    out[n, f, :, :] = np.sum(w[f, ...] *
-                                             x_[n, :, h*stride:h*stride+HH, w*stride:w*stride+WW])
+    S = conv_param['stride']
+    P = conv_param['pad']
+
+    # Add padding to each image
+    x_pad = np.pad(x, ((0,), (0,), (P,), (P,)), 'constant')
+    # Size of the output
+    Hh = 1 + (H + 2 * P - HH) // S
+    Hw = 1 + (W + 2 * P - WW) // S
+
+    out = np.zeros((N, F, Hh, Hw))
+
+    for n in range(N):  # First, iterate over all the images
+        for f in range(F):  # Second, iterate over all the kernels
+            for k in range(Hh):
+                for l in range(Hw):
+                    out[n, f, k, l] = np.sum(
+                        x_pad[n, :, k * S:k * S + HH, l * S:l * S + WW] * w[f, :]) + b[f]
+
+    cache = (x, w, b, conv_param)
+    return out, cache
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -449,40 +457,47 @@ def conv_backward_naive(dout, cache):
     # TODO: Implement the convolutional backward pass.                        #
     ###########################################################################
     x, w, b, conv_param = cache
-    stride = conv_param['stride']
-    pad_width = conv_param['pad']
-    x_ = np.pad(x, pad_width, 'constant', constant_values=0)
+    P = conv_param['pad']
+    x_pad = np.pad(x, ((0,), (0,), (P,), (P,)), 'constant')
 
     N, C, H, W = x.shape
     F, C, HH, WW = w.shape
-    N, F, H_, W_ = dout.shape
+    N, F, Hh, Hw = dout.shape
+    S = conv_param['stride']
 
-    dx_temp = np.zeros_like(x_)
-    dw = np.zeros_like(w)
-    db = np.zeros_like(b)
+    # For dw: Size (C,HH,WW)
+    # Brut force love the loops !
+    dw = np.zeros((F, C, HH, WW))
+    for fprime in range(F):
+        for cprime in range(C):
+            for i in range(HH):
+                for j in range(WW):
+                    sub_xpad = x_pad[:, cprime, i:i + Hh * S:S, j:j + Hw * S:S]
+                    dw[fprime, cprime, i, j] = np.sum(
+                        dout[:, fprime, :, :] * sub_xpad)
 
-    for f in range(F):
-        db[f] += np.sum(dout[:, f, ...])
+    # For db : Size (F,)
+    db = np.zeros((F))
+    for fprime in range(F):
+        db[fprime] = np.sum(dout[:, fprime, :, :])
 
-    # dw = dout * x
-    for n in range(N):
-        for f in range(F):
-            for h in range(H_):
-                for w in range(W_):
-                    dw[f, ...] += dout[n, f, h, w] * x_[n, :, h *
-                                                        stride:h*stride+HH, w*stride:w*stride+WW]
-    # dx = dout * w
-    for n in range(N):
-        for f in range(F):
-            for h in range(H_):
-                for w in range(W_):
-                    dx_temp[n, :, h*stride:h*stride+HH, w*stride:w *
-                            stride+WW] += dout[n, f, h, w]*w[f, ...]
-    dx = dx_temp[:, :, pad_width:H+pad_width, pad_width:W+pad_width]
+    dx = np.zeros((N, C, H, W))
+    for nprime in range(N):
+        for i in range(H):
+            for j in range(W):
+                for f in range(F):
+                    for k in range(Hh):
+                        for l in range(Hw):
+                            mask1 = np.zeros_like(w[f, :, :, :])
+                            mask2 = np.zeros_like(w[f, :, :, :])
+                            if (i + P - k * S) < HH and (i + P - k * S) >= 0:
+                                mask1[:, i + P - k * S, :] = 1.0
+                            if (j + P - l * S) < WW and (j + P - l * S) >= 0:
+                                mask2[:, :, j + P - l * S] = 1.0
+                            w_masked = np.sum(
+                                w[f, :, :, :] * mask1 * mask2, axis=(1, 2))
+                            dx[nprime, :, i, j] += dout[nprime, f, k, l] * w_masked
 
-    ###########################################################################
-    #                             END OF YOUR CODE                            #
-    ###########################################################################
     return dx, dw, db
 
 
@@ -501,23 +516,23 @@ def max_pool_forward_naive(x, pool_param):
     - out: Output data
     - cache: (x, pool_param)
     """
-    height = pool_param.get('pool_height')
-    width = pool_param.get('pool_width')
-    stride = pool_param.get('stride')
-    N, C, H, W = x.shape
     ###########################################################################
     # TODO: Implement the max pooling forward pass                            #
     ###########################################################################
-    # output dimension
-    H_ = np.int((H-height)/stride+1)
-    W_ = np.int((W-width)/stride+1)
-    out = np.zeros(N, C, H_, W_)
+    Hp = pool_param['pool_height']
+    Wp = pool_param['pool_width']
+    S = pool_param['stride']
+    N, C, H, W = x.shape
+    H1 = (H - Hp) // S + 1
+    W1 = (W - Wp) // S + 1
+
+    out = np.zeros((N, C, H1, W1))
     for n in range(N):
         for c in range(C):
-            for h in range(H_):
-                for w in range(W_):
-                    out[n, c, h*stride:h*stride+height, w*stride:w*stride+width] = np.max(
-                        x[n, c, h*stride:h*stride+height, w*stride:w*stride+width])
+            for k in range(H1):
+                for l in range(W1):
+                    out[n, c, k, l] = np.max(
+                        x[n, c, k * S:k * S + Hp, l * S:l * S + Wp])
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -540,21 +555,24 @@ def max_pool_backward_naive(dout, cache):
     # TODO: Implement the max pooling backward pass                           #
     ###########################################################################
     x, pool_param = cache
-    height = pool_param.get('pool_height')
-    width = pool_param.get('pool_width')
-    stride = pool_param.get('stride')
+    Hp = pool_param['pool_height']
+    Wp = pool_param['pool_width']
+    S = pool_param['stride']
     N, C, H, W = x.shape
-    _, _, H_, W_ = dout.shape
-    dx = np.zeros_like(x)
-    for n in range(N):
-        for c in range(C):
-            for h in range(H_):
-                for w in range(W_):
-                    max_idx = np.argmax(
-                        x[n, c, h*stride:h*stride+height, w*stride:w*stride+width])
-                    max_coor = np.unravel_index(max_idx, [height, width])
-                    dx[n, c, h*stride:h*stride+height, w*stride:w *
-                        stride+width][max_coor] = dout[n, c, h, w]
+    H1 = (H - Hp) // S + 1
+    W1 = (W - Wp) // S + 1
+
+    dx = np.zeros((N, C, H, W))
+    for nprime in range(N):
+        for cprime in range(C):
+            for k in range(H1):
+                for l in range(W1):
+                    x_pooling = x[nprime, cprime, k *
+                                  S:k * S + Hp, l * S:l * S + Wp]
+                    maxi = np.max(x_pooling)
+                    x_mask = x_pooling == maxi
+                    dx[nprime, cprime, k * S:k * S + Hp, l * S:l *
+                        S + Wp] += dout[nprime, cprime, k, l] * x_mask
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
