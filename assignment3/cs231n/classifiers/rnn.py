@@ -8,31 +8,36 @@ from cs231n.rnn_layers import *
 
 class CaptioningRNN(object):
     """
-    A CaptioningRNN produces captions from image features using a recurrent
-    neural network.
+	A CaptioningRNN produces captions from image features using a recurrent
+	neural network.
 
-    The RNN receives input vectors of size D, has a vocab size of V, works on
-    sequences of length T, has an RNN hidden dimension of H, uses word vectors
-    of dimension W, and operates on minibatches of size N.
+	The RNN receives input vectors of size D, has a vocab size of V, works on
+	sequences of length T, has an RNN hidden dimension of H, uses word vectors
+	of dimension W, and operates on minibatches of size N.
 
-    Note that we don't use any regularization for the CaptioningRNN.
-    """
+	Note that we don't use any regularization for the CaptioningRNN.
+	"""
 
-    def __init__(self, word_to_idx, input_dim=512, wordvec_dim=128,
-                 hidden_dim=128, cell_type='rnn', dtype=np.float32):
+    def __init__(self,
+                 word_to_idx,
+                 input_dim=512,
+                 wordvec_dim=128,
+                 hidden_dim=128,
+                 cell_type='rnn',
+                 dtype=np.float32):
         """
-        Construct a new CaptioningRNN instance.
+		Construct a new CaptioningRNN instance.
 
-        Inputs:
-        - word_to_idx: A dictionary giving the vocabulary. It contains V entries,
-          and maps each string to a unique integer in the range [0, V).
-        - input_dim: Dimension D of input image feature vectors.
-        - wordvec_dim: Dimension W of word vectors.
-        - hidden_dim: Dimension H for the hidden state of the RNN.
-        - cell_type: What type of RNN to use; either 'rnn' or 'lstm'.
-        - dtype: numpy datatype to use; use float32 for training and float64 for
-          numeric gradient checking.
-        """
+		Inputs:
+		- word_to_idx: A dictionary giving the vocabulary. It contains V entries,
+		  and maps each string to a unique integer in the range [0, V).
+		- input_dim: Dimension D of input image feature vectors.
+		- wordvec_dim: Dimension W of word vectors.
+		- hidden_dim: Dimension H for the hidden state of the RNN.
+		- cell_type: What type of RNN to use; either 'rnn' or 'lstm'.
+		- dtype: numpy datatype to use; use float32 for training and float64 for
+		  numeric gradient checking.
+		"""
         if cell_type not in {'rnn', 'lstm'}:
             raise ValueError('Invalid cell_type "%s"' % cell_type)
 
@@ -74,22 +79,21 @@ class CaptioningRNN(object):
         for k, v in self.params.items():
             self.params[k] = v.astype(self.dtype)
 
-
     def loss(self, features, captions):
         """
-        Compute training-time loss for the RNN. We input image features and
-        ground-truth captions for those images, and use an RNN (or LSTM) to compute
-        loss and gradients on all parameters.
+		Compute training-time loss for the RNN. We input image features and
+		ground-truth captions for those images, and use an RNN (or LSTM) to compute
+		loss and gradients on all parameters.
 
-        Inputs:
-        - features: Input image features, of shape (N, D)
-        - captions: Ground-truth captions; an integer array of shape (N, T) where
-          each element is in the range 0 <= y[i, t] < V
+		Inputs:
+		- features: Input image features, of shape (N, D)
+		- captions: Ground-truth captions; an integer array of shape (N, T) where
+		  each element is in the range 0 <= y[i, t] < V
 
-        Returns a tuple of:
-        - loss: Scalar loss
-        - grads: Dictionary of gradients parallel to self.params
-        """
+		Returns a tuple of:
+		- loss: Scalar loss
+		- grads: Dictionary of gradients parallel to self.params
+		"""
         # Cut captions into two pieces: captions_in has everything but the last word
         # and will be input to the RNN; captions_out has everything but the first
         # word and this is what we will expect the RNN to generate. These are offset
@@ -137,38 +141,77 @@ class CaptioningRNN(object):
         # defined above to store loss and gradients; grads[k] should give the      #
         # gradients for self.params[k].                                            #
         ############################################################################
-        pass
+        # 1)
+        h0 = np.dot(features, W_proj) + b_proj
+        # 2)
+        x, chache_embedding = word_embedding_forward(captions_in, W_embed)
+
+        if self.cell_type == 'rnn':
+            h, cache_rnn = rnn_forward(x, h0, Wx, Wh, b)
+        elif self.cell_type == 'lstm':
+            h, cache_rnn = lstm_forward(x, h0, Wx, Wh, b)
+        else:
+            raise ValueError('{} is not a correct type'.format(self.cell_type))
+
+        scores, cache_scores = temporal_affine_forward(h, W_vocab, b_vocab)
+        loss, dscores = temporal_softmax_loss(
+            scores, captions_out, mask, verbose=False)
+
+        grads = dict.fromkeys(self.params)
+
+        dh, dW_vocab, db_vocab = temporal_affine_backward(
+            dscores, cache_scores)
+
+        if self.cell_type == 'rnn':
+            dx, dh0, dWx, dWh, db = rnn_backward(dh, cache_rnn)
+        elif self.cell_type == 'lstm':
+            dx, dh0, dWx, dWh, db = lstm_backward(dh, cache_rnn)
+        else:
+            raise ValueError('{} is not a correct type'.format(self.cell_type))
+
+        dW_embed = word_embedding_backward(dx, chache_embedding)
+
+        dW_proj = np.dot(features.T, dh0)
+        db_proj = np.sum(dh0, axis=0)
+
+        grads['W_proj'] = dW_proj
+        grads['b_proj'] = db_proj
+        grads['W_embed'] = dW_embed
+        grads['Wx'] = dWx
+        grads['Wh'] = dWh
+        grads['b'] = db
+        grads['W_vocab'] = dW_vocab
+        grads['b_vocab'] = db_vocab
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
 
         return loss, grads
 
-
     def sample(self, features, max_length=30):
         """
-        Run a test-time forward pass for the model, sampling captions for input
-        feature vectors.
+		Run a test-time forward pass for the model, sampling captions for input
+		feature vectors.
 
-        At each timestep, we embed the current word, pass it and the previous hidden
-        state to the RNN to get the next hidden state, use the hidden state to get
-        scores for all vocab words, and choose the word with the highest score as
-        the next word. The initial hidden state is computed by applying an affine
-        transform to the input image features, and the initial word is the <START>
-        token.
+		At each timestep, we embed the current word, pass it and the previous hidden
+		state to the RNN to get the next hidden state, use the hidden state to get
+		scores for all vocab words, and choose the word with the highest score as
+		the next word. The initial hidden state is computed by applying an affine
+		transform to the input image features, and the initial word is the <START>
+		token.
 
-        For LSTMs you will also have to keep track of the cell state; in that case
-        the initial cell state should be zero.
+		For LSTMs you will also have to keep track of the cell state; in that case
+		the initial cell state should be zero.
 
-        Inputs:
-        - features: Array of input image features of shape (N, D).
-        - max_length: Maximum length T of generated captions.
+		Inputs:
+		- features: Array of input image features of shape (N, D).
+		- max_length: Maximum length T of generated captions.
 
-        Returns:
-        - captions: Array of shape (N, max_length) giving sampled captions,
-          where each element is an integer in the range [0, V). The first element
-          of captions should be the first sampled word, not the <START> token.
-        """
+		Returns:
+		- captions: Array of shape (N, max_length) giving sampled captions,
+		  where each element is an integer in the range [0, V). The first element
+		  of captions should be the first sampled word, not the <START> token.
+		"""
         N = features.shape[0]
         captions = self._null * np.ones((N, max_length), dtype=np.int32)
 
@@ -199,8 +242,36 @@ class CaptioningRNN(object):
         # functions; you'll need to call rnn_step_forward or lstm_step_forward in #
         # a loop.                                                                 #
         ###########################################################################
-        pass
+        h0 = features.dot(W_proj) + b_proj
+
+        captions[:, 0] = self._start
+        prev_h = h0
+        prev_c = np.zeros_like(h0)  # previous cell state
+        capt = self._start * np.ones((N, 1), dtype=np.int32)
+        for t in range(max_length):
+            word_embed, _ = word_embedding_forward(capt, W_embed)
+            if self.cell_type == 'rnn':
+                h, _ = rnn_step_forward(
+                    np.squeeze(word_embed), prev_h, Wx, Wh, b)
+            elif self.cell_type == 'lstm':
+                h, c, _ = lstm_step_forward(
+                    np.squeeze(word_embed), prev_h, prev_c, Wx, Wh, b)
+            else:
+                raise ValueError('{} is not a correct type'.format(
+                    self.cell_type))
+
+            scores, _ = temporal_affine_forward(h[:, np.newaxis, :], W_vocab,
+                                                b_vocab)
+            idx_best = np.squeeze(np.argmax(scores, axis=2))
+            captions[:, t] = idx_best
+            prev_h = h
+
+            if self.cell_type == 'lstm':
+                prev_c = c
+            capt = captions[:, t]
+
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
+
         return captions
