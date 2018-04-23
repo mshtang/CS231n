@@ -1,4 +1,4 @@
 {
     "python.pythonPath": "C:\\Users\\maosheng\\Miniconda3\\python.exe",
-    "editor.wordWrapColumn": 100,
+    "editor.wordWrap": "off"
 }
